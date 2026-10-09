@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 
 const {
   listPopularUniversities,
@@ -7,7 +7,7 @@ const {
 
 const router = express.Router();
 
-router.get("/", listUniversities);
 router.get("/popular", listPopularUniversities);
+router.get("/", listUniversities);
 
 module.exports = router;

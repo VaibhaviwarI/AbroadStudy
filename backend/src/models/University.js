@@ -1,4 +1,4 @@
-﻿const mongoose = require("mongoose");
+const mongoose = require("mongoose");
 
 const universitySchema = new mongoose.Schema(
   {
@@ -39,6 +39,7 @@ const universitySchema = new mongoose.Schema(
   }
 );
 
+universitySchema.index({ popularScore: -1, qsRanking: 1 });
 universitySchema.index({ name: "text", country: "text", city: "text" });
 
 module.exports = mongoose.model("University", universitySchema);
