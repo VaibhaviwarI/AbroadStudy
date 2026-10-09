@@ -1,4 +1,4 @@
-﻿const jwt = require("jsonwebtoken");
+const jwt = require("jsonwebtoken");
 
 const env = require("../config/env");
 const Student = require("../models/Student");
@@ -29,6 +29,16 @@ const requireAuth = asyncHandler(async (req, res, next) => {
   }
 });
 
+const requireRoles = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      throw new HttpError(403, `Forbidden. Requires one of roles: ${roles.join(", ")}`);
+    }
+    next();
+  };
+};
+
 module.exports = {
   requireAuth,
+  requireRoles,
 };
