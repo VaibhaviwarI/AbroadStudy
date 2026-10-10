@@ -1,70 +1,136 @@
-﻿const Program = require("../models/Program");
+const mongoose = require("mongoose");
+const Program = require("../models/Program");
 const Student = require("../models/Student");
 const HttpError = require("../utils/httpError");
 
-function calculateScore(student, program) {
-  let score = 0;
-  const reasons = [];
-
-  if (student.targetCountries.includes(program.country)) {
-    score += 35;
-    reasons.push(`Preferred country match: ${program.country}`);
-  }
-
-  if (
-    student.interestedFields.some((field) =>
-      program.field.toLowerCase().includes(field.toLowerCase())
-    )
-  ) {
-    score += 30;
-    reasons.push(`Field alignment: ${program.field}`);
-  }
-
-  if (student.maxBudgetUsd >= program.tuitionFeeUsd) {
-    score += 20;
-    reasons.push("Within budget range");
-  }
-
-  if (student.preferredIntake && program.intakes.includes(student.preferredIntake)) {
-    score += 10;
-    reasons.push(`Preferred intake available: ${student.preferredIntake}`);
-  }
-
-  if ((student.englishTest?.score || 0) >= program.minimumIelts) {
-    score += 5;
-    reasons.push("English test score meets requirement");
-  }
-
-  return {
-    score,
-    reasons,
-  };
-}
-
 async function buildProgramRecommendations(studentId) {
+  if (!mongoose.Types.ObjectId.isValid(studentId)) {
+    throw new HttpError(400, "Invalid student ID format.");
+  }
+
   const student = await Student.findById(studentId).lean();
 
   if (!student) {
     throw new HttpError(404, "Student not found.");
   }
 
-  const candidatePrograms = await Program.find({
-    country: { $in: student.targetCountries },
-  })
-    .limit(25)
-    .lean();
+  const targetCountries = student.targetCountries || [];
+  const interestedFields = student.interestedFields || [];
+  const preferredIntake = student.preferredIntake || "";
+  const maxBudgetUsd = student.maxBudgetUsd || 0;
+  const ieltsScore = student.englishTest?.score || 0;
 
-  const recommendations = candidatePrograms
-    .map((program) => {
-      const { score, reasons } = calculateScore(student, program);
-      return {
-        ...program,
-        matchScore: score,
-        reasons,
-      };
-    })
-    .sort((left, right) => right.matchScore - left.matchScore)
-    .slice(0, 5);
+  // Build MongoDB Aggregation Pipeline
+  const pipeline = [];
+
+  // Match: Candidates matching either target countries or within reasonable scope
+  if (targetCountries.length > 0) {
+    pipeline.push({
+      $match: {
+        country: { $in: targetCountries },
+      },
+    });
+  }
+
+  // Calculate scores and reasons using MongoDB Aggregation expressions
+  pipeline.push({
+    $addFields: {
+      isCountryMatch: {
+        $in: ["$country", targetCountries],
+      },
+      isFieldMatch: {
+        $in: ["$field", interestedFields],
+      },
+      isBudgetMatch: {
+        $lte: ["$tuitionFeeUsd", maxBudgetUsd > 0 ? maxBudgetUsd : 999999],
+      },
+      isIntakeMatch: {
+        $in: [preferredIntake, "$intakes"],
+      },
+      isIeltsMatch: {
+        $gte: [ieltsScore, "$minimumIelts"],
+      },
+    },
+  });
+
+  pipeline.push({
+    $addFields: {
+      matchScore: {
+        $add: [
+          { $cond: ["$isCountryMatch", 35, 0] },
+          { $cond: ["$isFieldMatch", 30, 0] },
+          { $cond: ["$isBudgetMatch", 20, 0] },
+          { $cond: ["$isIntakeMatch", 10, 0] },
+          { $cond: ["$isIeltsMatch", 5, 0] },
+        ],
+      },
+      reasons: {
+        $concatArrays: [
+          {
+            $cond: [
+              "$isCountryMatch",
+              [{ $concat: ["Preferred country match: ", "$country"] }],
+              [],
+            ],
+          },
+          {
+            $cond: [
+              "$isFieldMatch",
+              [{ $concat: ["Field alignment: ", "$field"] }],
+              [],
+            ],
+          },
+          {
+            $cond: [
+              "$isBudgetMatch",
+              ["Within budget range"],
+              [],
+            ],
+          },
+          {
+            $cond: [
+              "$isIntakeMatch",
+              [{ $concat: ["Preferred intake available: ", preferredIntake] }],
+              [],
+            ],
+          },
+          {
+            $cond: [
+              "$isIeltsMatch",
+              ["English test score meets requirement"],
+              [],
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  // Sort by match score descending, then by lower tuition fee
+  pipeline.push({
+    $sort: {
+      matchScore: -1,
+      tuitionFeeUsd: 1,
+    },
+  });
+
+  // Limit to top 5 recommendations
+  pipeline.push({
+    $limit: 5,
+  });
+
+  // Project clean response fields
+  pipeline.push({
+    $project: {
+      isCountryMatch: 0,
+      isFieldMatch: 0,
+      isBudgetMatch: 0,
+      isIntakeMatch: 0,
+      isIeltsMatch: 0,
+    },
+  });
+
+  const recommendations = await Program.aggregate(pipeline);
 
   return {
     data: {
@@ -73,12 +139,15 @@ async function buildProgramRecommendations(studentId) {
         fullName: student.fullName,
         targetCountries: student.targetCountries,
         interestedFields: student.interestedFields,
+        preferredIntake: student.preferredIntake,
+        maxBudgetUsd: student.maxBudgetUsd,
+        englishScore: ieltsScore,
       },
       recommendations,
     },
     meta: {
-      implementationStatus:
-        "starter-scoring-in-javascript-replace-with-mongodb-aggregation",
+      implementationStatus: "mongodb-aggregation-pipeline",
+      pipelineStagesCount: pipeline.length,
     },
   };
 }
