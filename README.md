@@ -1,4 +1,4 @@
-﻿# Waygood Study Abroad Candidate Evaluation Starter
+# Waygood Study Abroad Candidate Evaluation Starter
 
 This repository is a starter assignment for backend-focused MERN candidates interviewing with Waygood.
 
@@ -117,62 +117,134 @@ A strong submission can usually be completed in 6-8 focused hours. We care more 
 ```
 
 ## Getting Started
+## Solution Implementation Overview
 
-### 1. Backend setup
+This repository contains the complete, production-ready solution for the Waygood Study Abroad Platform backend evaluation, built using **Node.js, Express, MongoDB/Mongoose, JWT, React, and Tailwind CSS**.
 
+The architecture reflects real-world engineering standards while remaining clean and easy to explain during interviews.
+
+---
+
+## Key Features & Completed Tasks
+
+### 1. Authentication & Security
+- **Secure Password Hashing:** Implemented with `bcryptjs` using a pre-save hook in Mongoose with salt rounds of 10.
+- **Explainable JWT Auth:** Clean `jwt.sign()` and `jwt.verify()` implementation using bearer tokens.
+- **Endpoints:**
+  - `POST /api/auth/register`: Validates user info, ensures unique email, hashes password, saves preferences (target countries, field interests, preferred intake, budget, IELTS score), and issues token.
+  - `POST /api/auth/login`: Validates credentials, checks password match, and returns JWT.
+  - `GET /api/auth/me`: Protected route returning user profile without exposing password hashes.
+- **Role-Based Access Control:** Role validation supporting `student` and `counselor` with `requireRoles` middleware.
+
+### 2. University & Program Discovery
+- **`GET /api/programs`**: Advanced querying with filtering (`country`, `degreeLevel`, `field`, `intake`, `maxTuition`, `scholarshipAvailable`, text `q`), dynamic sorting (`tuitionAsc`, `tuitionDesc`, `relevance`), and standardized pagination metadata (`page`, `limit`, `total`, `totalPages`).
+- **`GET /api/universities`**: Filtering by country, partner type, scholarship status, and full text search.
+- **Consistent Response Contract:**
+  ```json
+  {
+    "success": true,
+    "data": [ ... ],
+    "meta": { "page": 1, "limit": 10, "total": 12, "totalPages": 2 }
+  }
+  ```
+
+### 3. Recommendation Engine (MongoDB Aggregation Pipeline)
+- Located in `src/services/recommendationService.js`.
+- Replaced in-memory JavaScript logic with a **native MongoDB Aggregation Pipeline**:
+  - `$match`: Filters candidate programs by target destinations.
+  - `$addFields` + `$cond`: Calculates matching scores based on real study-abroad criteria:
+    - **Country Match:** +35 pts
+    - **Field Alignment:** +30 pts
+    - **Budget Affordability (`tuitionFeeUsd <= maxBudgetUsd`):** +20 pts
+    - **Intake Match (`intakes contains preferredIntake`):** +10 pts
+    - **IELTS Score (`score >= minimumIelts`):** +5 pts
+  - `$concatArrays`: Dynamically builds human-readable explanation strings describing why each program was recommended.
+  - `$sort`: Orders by `matchScore: -1` and `tuitionFeeUsd: 1`.
+  - `$limit`: Returns top 5 best matches.
+
+### 4. Application Workflow System
+- **`POST /api/applications`**:
+  - Validates program existence and destination country.
+  - **Duplicate Prevention:** Prevents students from submitting multiple applications to the same program for the same intake.
+  - Initializes timeline history with timestamp and creation note.
+- **`PATCH /api/applications/:id/status`**:
+  - Enforces strict state machine transitions:
+    - `draft` → `submitted`
+    - `submitted` → `under-review` or `rejected`
+    - `under-review` → `offer-received` or `rejected`
+    - `offer-received` → `visa-processing` or `rejected`
+    - `visa-processing` → `enrolled` or `rejected`
+  - Rejects illegal transitions with a 400 Bad Request error.
+  - Records an immutable timeline entry for audit history.
+
+### 5. Performance, Indexing & Caching
+- **In-Memory TTL Caching (`cacheService.js`):**
+  - Caches `GET /api/universities/popular` and `GET /api/dashboard/overview`.
+  - Includes cache invalidation when applications are created or status changes.
+  - Returns `meta.cache: "hit"` or `"miss"` in the API response.
+- **Database Indexing Strategies:**
+  - `Application`: Unique compound index `{ student: 1, program: 1, intake: 1 }` prevents duplicates at the database layer; index on `status` speeds up counselor filtering.
+  - `Program`: Compound index on `{ country: 1, degreeLevel: 1, field: 1, tuitionFeeUsd: 1 }` optimizes catalog multi-filter queries.
+  - `University`: Compound index on `{ popularScore: -1, qsRanking: 1 }` powers the popular endpoint; text index on `name`, `country`, `city` supports fast search.
+
+### 6. Testing & Quality Assurance
+- **Automated Tests:** 11 unit & integration tests covering:
+  - Input validation on registration and login.
+  - JWT authorization token checking and `/api/auth/me`.
+  - Duplicate application prevention.
+  - State machine transition rules & edge cases.
+  - University popular caching and program pagination.
+- Run tests:
+  ```bash
+  npm --prefix backend test
+  ```
+
+### 7. Modern React + Tailwind CSS Dashboard
+- Responsive interactive frontend built with Vite, React, and Tailwind CSS.
+- Features:
+  - **Catalog Explorer:** Multi-filter search for programs and universities.
+  - **Aggregation Recommendations Tab:** Shows live match scores (out of 100) and criteria badges.
+  - **Application Tracker:** Step-by-step audit timeline with counselor transition actions.
+  - **Analytics Tab:** Live metrics, status distribution, and cache status indicator (`HIT`/`MISS`).
+  - **Demo User Switcher:** Seamlessly toggle between Aarav (Student), Sara (Student), and Neha (Counselor).
+
+---
+
+## Getting Started
+
+### 1. Prerequisites
+- Node.js (v18+)
+- MongoDB running locally on `mongodb://127.0.0.1:27017` or a MongoDB Atlas URI
+
+### 2. Backend Setup
 ```bash
 cd backend
 npm install
-copy .env.example .env
-npm run seed
-npm run dev
+copy .env.example .env   # On macOS/Linux: cp .env.example .env
+npm run seed             # Seeds sample universities, programs, students, and applications
+npm run dev              # Starts Express API on http://localhost:4000
 ```
 
-### 2. Frontend setup
+### 3. Run Automated Tests
+```bash
+cd backend
+npm test
+```
 
+### 4. Frontend Setup
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev              # Starts React Vite server on http://localhost:5173
 ```
 
-On macOS or Linux, use `cp .env.example .env` instead of `copy`.
+---
 
-## Environment Variables
+## Seeded Demo Credentials
 
-See `backend/.env.example`.
+| Role | Email | Password | Target Destinations |
+|---|---|---|---|
+| Student | `aarav@example.com` | `Candidate123!` | Canada, UAE |
+| Student | `sara@example.com` | `Candidate123!` | UK, Australia |
+| Counselor | `counselor@example.com` | `Candidate123!` | - |
 
-## Seeded Data Included
-
-The seed script creates sample:
-
-- students with profile preferences
-- universities across key study-abroad destinations
-- programs with tuition, intake, and IELTS requirements
-- applications with mixed statuses
-
-## Sample Seed Credentials
-
-After running the seed script, you can use:
-
-- `aarav@example.com` / `Candidate123!`
-- `sara@example.com` / `Candidate123!`
-- `counselor@example.com` / `Candidate123!`
-
-## Notes For Candidates
-
-- Some routes are intentionally incomplete
-- Some services are intentionally simple and should be improved
-- The codebase is structured to show expected engineering direction, not to be finished
-- You can refactor any part of the starter if your approach is better
-
-## Candidate-Friendly Deliverables
-
-Along with this README, a Word assignment brief is available at:
-
-- `docs/Waygood_Candidate_Assignment.docx`
-
-## Reference Context Used For This Assignment Design
-
-- Waygood website: student discovery, AI tools, calculators, and partner-university positioning
-- Job description: backend APIs, MongoDB aggregation, performance optimization, caching, and AI integration
